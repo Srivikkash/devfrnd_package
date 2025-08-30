@@ -17,6 +17,13 @@ classifiers = [
 ]
 license = "MIT"
 
+dependencies = [
+  "loguru",
+  "pymongo",
+  "click",
+  "rich"
+]
+
 [project.urls]
 Homepage = "https://github.com/Srivikkash/devfrnd_package"
 Issues = "https://github.com/Srivikkash/devfrnd_package/issues"
