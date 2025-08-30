@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devfrnd"
+version = "0.1.0"
+authors = [
+  { name="Srivikkash Gopinath", email="vikkassri@gmail.com" },
+]
+description = "Developer utilities to simplify common tasks"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "MIT"
+
+[project.urls]
+Homepage = "https://github.com/pypa/sampleproject"
+Issues = "https://github.com/pypa/sampleproject/issues"
+
+[project.scripts]
+devfrnd = "devfrnd.app:cli"
