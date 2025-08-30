@@ -18,8 +18,8 @@ classifiers = [
 license = "MIT"
 
 [project.urls]
-Homepage = "https://github.com/pypa/sampleproject"
-Issues = "https://github.com/pypa/sampleproject/issues"
+Homepage = "https://github.com/Srivikkash/devfrnd_package"
+Issues = "https://github.com/Srivikkash/devfrnd_package/issues"
 
 [project.scripts]
 devfrnd = "devfrnd.app:cli"
