@@ -1,27 +1,26 @@
 [build-system]
-requires = ["setuptools >= 77.0.3"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "devfrnd"
-version = "0.1.0"
+version = "0.1.2"
 authors = [
   { name="Srivikkash Gopinath", email="vikkassri@gmail.com" },
 ]
 description = "Developer utilities to simplify common tasks"
 readme = "README.md"
 requires-python = ">=3.9"
+license = { text = "MIT" }
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
-license = "MIT"
-
 dependencies = [
-  "loguru",
-  "pymongo",
-  "click",
-  "rich"
+  "loguru>=0.7.2",
+  "pymongo>=4.3.0",
+  "click>=8.1.0",
+  "rich>=13.0.0"
 ]
 
 [project.urls]
