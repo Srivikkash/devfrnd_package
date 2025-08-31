@@ -1,5 +1,6 @@
 import click
-from devfrnd.db_migration_utils.db_migrator import migrate
+from devfrnd.router.db_migration_service import migrate
+from devfrnd.router.flask_helper_service import flask_endpoints
 from devfrnd import __version__
 
 @click.group()
@@ -13,13 +14,18 @@ def cli():
         
         Use --help after any command to see usage instructions.
         
-        Example: devfrnd db_migrator --help
+        Available Commands:
+            
+            migrate          Database migration utility
+            
+            flask_endpoints  Fetch and display Flask app endpoints
         
-        More commands coming soon!    
+            More commands coming soon!    
     """
     pass
 
 cli.add_command(migrate)
+cli.add_command(flask_endpoints)
 
 if __name__ == "__main__":
     cli()

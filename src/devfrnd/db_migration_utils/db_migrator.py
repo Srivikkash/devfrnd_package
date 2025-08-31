@@ -1,10 +1,9 @@
 import math
 import signal
-import sys
 from pathlib import Path
 from pymongo import MongoClient
-from pymongo.errors import BulkWriteError, ConfigurationError, ConnectionFailure, OperationFailure
-import click
+from pymongo.errors import BulkWriteError, ConfigurationError, ConnectionFailure, OperationFailure, PyMongoError
+
 from devfrnd.base_utils.logger_utils import RichLogger
 from rich.progress import (
     Progress,
@@ -16,7 +15,6 @@ from rich.progress import (
 from rich.console import Console
 
 # Logger
-CONFIG_PATH = Path(__file__).parent / "logger.conf.json"
 logger = RichLogger()
 console = Console()
 
@@ -31,41 +29,12 @@ def handle_sigint(sig, frame):
 
 signal.signal(signal.SIGINT, handle_sigint)
 
-
-@click.command("db_migrator")
-@click.help_option("-h", "--help")
-@click.option(
-    "--to_local", "-tl", "direction", flag_value="to_local", required=True,
-    help="Migrate from cloud to local"
-)
-# @click.option(
-#     "--to_cloud", "-tc", "direction", flag_value="to_cloud", required=True,
-#     help="Migrate from local to cloud"
-# )
-@click.argument("connection_str", type=str)
-@click.argument("db_name", type=str)
-@click.option("--percentage", "-p", type=int, default=100, help="Percentage of data to migrate (1-100)")
-@click.option("--batch-size", "-b", type=int, default=1000, help="Batch size for inserts")
-def migrate(direction, connection_str, db_name, percentage, batch_size):
-    """Migrate MongoDB data between cloud and local.
-
-    \b
-    Examples:
-      devfrnd migrate --to_local "<CLOUD_URI>" mydb --percentage 50
-    #   devfrnd migrate --to_cloud "<CLOUD_URI>" mydb --batch-size 2000 (not active)
-    """
-
-    if not (1 <= percentage <= 100):
-        logger.error("Percentage must be between 1 and 100")
-        sys.exit(1)
-
-    if direction.lower() == "to_local":
-        source_uri, target_uri = connection_str, "mongodb://localhost:27017/"
-    # elif direction.lower() == "to_cloud":
-    #     source_uri, target_uri = "mongodb://localhost:27017/", connection_str
-
-    _migrate(source_uri, target_uri, db_name, percentage, batch_size)
-
+def _safe_close(client, name):
+    try:
+        if client:
+            client.close()
+    except Exception as e:
+        logger.error(f"Error closing {name} client: {e}")
 
 def _migrate(source_uri, target_uri, db_name, percentage, batch_size):
     global _stop
@@ -80,16 +49,25 @@ def _migrate(source_uri, target_uri, db_name, percentage, batch_size):
             target_client = MongoClient(target_uri)
             source_client.admin.command("ping")
             target_client.admin.command("ping")
-        except (ConfigurationError, ConnectionFailure, OperationFailure) as conn_err:
+        except (ConfigurationError, ConnectionFailure, OperationFailure, PyMongoError) as conn_err:
             logger.error(f"MongoDB connection error: {conn_err}")
             return
 
-        source_db = source_client[db_name]
-        target_db = target_client[db_name]
+        try:
+            source_db = source_client[db_name]
+            target_db = target_client[db_name]
+        except Exception as db_err:
+            logger.error(f"Error accessing database: {db_err}")
+            return
 
         logger.info(f"Starting migration for database: {db_name}")
 
-        collections = source_db.list_collection_names()
+        try:
+            collections = source_db.list_collection_names()
+        except Exception as coll_err:
+            logger.error(f"Error listing collections: {coll_err}")
+            return
+
         if not collections:
             logger.warning("No collections found in source DB.")
             return
@@ -108,15 +86,28 @@ def _migrate(source_uri, target_uri, db_name, percentage, batch_size):
                 if _stop:
                     break
 
-                source_coll = source_db[coll_name]
-                target_coll = target_db[coll_name]
+                try:
+                    source_coll = source_db[coll_name]
+                    target_coll = target_db[coll_name]
+                except Exception as coll_access_err:
+                    logger.error(f"Error accessing collection {coll_name}: {coll_access_err}")
+                    progress.advance(overall_task)
+                    continue
 
-                total_docs = source_coll.estimated_document_count()
+                try:
+                    total_docs = source_coll.estimated_document_count()
+                except Exception as count_err:
+                    logger.error(f"Error counting documents in {coll_name}: {count_err}")
+                    progress.advance(overall_task)
+                    continue
+
                 if total_docs == 0:
-                    # Empty collection: just create it
-                    if coll_name not in target_db.list_collection_names():
-                        target_db.create_collection(coll_name)
-                    logger.log_to_file(level="info", message=f"📂 {coll_name} - Created empty collection.")
+                    try:
+                        if coll_name not in target_db.list_collection_names():
+                            target_db.create_collection(coll_name)
+                        logger.log_to_file(level="info", message=f"📂 {coll_name} - Created empty collection.")
+                    except Exception as create_err:
+                        logger.log_to_file(f"Error creating empty collection {coll_name}: {create_err}")
                     progress.advance(overall_task)
                     continue
 
@@ -126,7 +117,13 @@ def _migrate(source_uri, target_uri, db_name, percentage, batch_size):
                 task = progress.add_task(f"[cyan]{coll_name}", total=num_to_migrate)
                 migrated_count = 0
 
-                cursor = source_coll.find({}, no_cursor_timeout=True).batch_size(batch_size)
+                try:
+                    cursor = source_coll.find({}, no_cursor_timeout=True).batch_size(batch_size)
+                except Exception as cursor_err:
+                    logger.error(f"Error creating cursor for {coll_name}: {cursor_err}")
+                    progress.advance(overall_task)
+                    continue
+
                 try:
                     while migrated_count < num_to_migrate and not _stop:
                         docs = []
@@ -134,10 +131,16 @@ def _migrate(source_uri, target_uri, db_name, percentage, batch_size):
                             for _ in range(batch_size):
                                 if migrated_count >= num_to_migrate:
                                     break
-                                docs.append(next(cursor))
-                        except StopIteration:
-                            # Cursor exhausted
-                            pass
+                                try:
+                                    docs.append(next(cursor))
+                                except StopIteration:
+                                    # Cursor exhausted
+                                    pass
+                                except Exception as doc_err:
+                                    logger.error(f"Error fetching document from {coll_name}: {doc_err}")
+                                    break
+                        except Exception as batch_err:
+                            logger.log_to_file(f"Error batching documents in {coll_name}: {batch_err}")
 
                         if not docs:
                             break
@@ -151,14 +154,22 @@ def _migrate(source_uri, target_uri, db_name, percentage, batch_size):
                                 else:
                                     logger.error(f"Write error in {coll_name}: {err}")
                             logger.warning(f"BulkWriteError in {coll_name}")
-                        except Exception as write_err:
+                        except PyMongoError as write_err:
                             logger.error(f"Write error in {coll_name}: {write_err}")
+                            break
+                        except Exception as write_unexp:
+                            logger.error(f"Unexpected error during write in {coll_name}: {write_unexp}")
                             break
 
                         migrated_count += len(docs)
                         progress.update(task, advance=len(docs))
+                except Exception as migrate_err:
+                    logger.error(f"Error migrating documents in {coll_name}: {migrate_err}")
                 finally:
-                    cursor.close()
+                    try:
+                        cursor.close()
+                    except Exception as close_err:
+                        logger.error(f"Error closing cursor for {coll_name}: {close_err}")
 
                 progress.advance(overall_task)
                 logger.log_to_file(level="info", message=f"✅ Completed {coll_name}: {migrated_count}/{total_docs}")
@@ -169,9 +180,6 @@ def _migrate(source_uri, target_uri, db_name, percentage, batch_size):
     except Exception as e:
         logger.error(f"Migration failed: {e}")
     finally:
-        if source_client:
-            source_client.close()
-        if target_client:
-            target_client.close()
+        _safe_close(source_client, "source")
+        _safe_close(target_client, "target")
         logger.log_to_file(level="info", message=f"==============================================================")
-        
